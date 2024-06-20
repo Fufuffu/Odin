@@ -1170,6 +1170,12 @@ foreign lib {
 	UpdateCamera :: proc(camera: ^Camera, mode: CameraMode) ---                                   // Set camera mode (multiple camera modes available)
 	UpdateCameraPro :: proc(camera: ^Camera, movement: Vector3, rotation: Vector3, zoom: f32) --- // Update camera movement/rotation
 
+	// Camera movement
+	CameraMoveForward :: proc(camera: ^Camera, distance: c.float, moveInWorldPlane: c.bool) ---
+	CameraMoveUp :: proc(camera: ^Camera, distance: c.float) ---
+	CameraMoveRight :: proc(camera: ^Camera, distance: c.float, moveInWorldPlane: c.bool) ---
+	CameraMoveToTarget :: proc(camera: ^Camera, delta: c.float) ---
+
 	//------------------------------------------------------------------------------------
 	// Basic Shapes Drawing Functions (Module: shapes)
 	//------------------------------------------------------------------------------------
