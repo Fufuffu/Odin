@@ -346,6 +346,7 @@ gb_internal Scope *scope_of_node(Ast *node) {
 
 gb_internal void check_open_scope(CheckerContext *c, Ast *node) {
 	node = unparen_expr(node);
+	GB_ASSERT(node != nullptr);
 	GB_ASSERT(node->kind == Ast_Invalid ||
 	          is_ast_stmt(node) ||
 	          is_ast_type(node));
@@ -3493,20 +3494,6 @@ gb_internal DECL_ATTRIBUTE_PROC(proc_decl_attribute) {
 			error(elem, "Expected a string value for '%.*s'", LIT(name));
 		}
 		return true;
-	} else if (name == "warning") {
-		ExactValue ev = check_decl_attribute_value(c, value);
-
-		if (ev.kind == ExactValue_String) {
-			String msg = ev.value_string;
-			if (msg.len == 0) {
-				error(elem, "Warning message cannot be an empty string");
-			} else {
-				ac->warning_message = msg;
-			}
-		} else {
-			error(elem, "Expected a string value for '%.*s'", LIT(name));
-		}
-		return true;
 	} else if (name == "require_results") {
 		if (value != nullptr) {
 			error(elem, "Expected no value for '%.*s'", LIT(name));
@@ -3913,10 +3900,11 @@ gb_internal void check_decl_attributes(CheckerContext *c, Array<Ast *> const &at
 			}
 
 			if (!proc(c, elem, name, value, ac)) {
-				if (!build_context.ignore_unknown_attributes) {
+				if (!build_context.ignore_unknown_attributes &&
+				    !string_set_exists(&build_context.custom_attributes, name)) {
 					ERROR_BLOCK();
 					error(elem, "Unknown attribute element name '%.*s'", LIT(name));
-					error_line("\tDid you forget to use build flag '-ignore-unknown-attributes'?\n");
+					error_line("\tDid you forget to use the build flag '-ignore-unknown-attributes' or '-custom-attribute:%.*s'?\n", LIT(name));
 				}
 			}
 		}
