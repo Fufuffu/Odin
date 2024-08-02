@@ -112,7 +112,8 @@ Image_Option:
 
 	`.alpha_drop_if_present`
 		If the image has an alpha channel, drop it.
-		You may want to use `.alpha_premultiply` in this case.
+		You may want to use `.alpha_
+		tiply` in this case.
 
 		NOTE: For PNG, this also skips handling of the tRNS chunk, if present,
 		unless you select `alpha_premultiply`.
@@ -585,6 +586,32 @@ Channel :: enum u8 {
 	G = 2,
 	B = 3,
 	A = 4,
+}
+
+// Take a slice of pixels (`[]RGBA_Pixel`, etc), and return an `Image`
+// Don't call `destroy` on the resulting `Image`. Instead, delete the original `pixels` slice.
+pixels_to_image :: proc(pixels: [][$N]$E, width: int, height: int) -> (img: Image, ok: bool) where E == u8 || E == u16, N >= 1 && N <= 4 {
+	if len(pixels) != width * height {
+		return {}, false
+	}
+
+	img.height   = height
+	img.width    = width
+	img.depth    = 8 when E == u8 else 16
+	img.channels = N
+
+	s := transmute(runtime.Raw_Slice)pixels
+	d := runtime.Raw_Dynamic_Array{
+		data = s.data,
+		len  = s.len * size_of(E) * N,
+		cap  = s.len * size_of(E) * N,
+		allocator = runtime.nil_allocator(),
+	}
+	img.pixels = bytes.Buffer{
+		buf = transmute([dynamic]u8)d,
+	}
+
+	return img, true
 }
 
 // When you have an RGB(A) image, but want a particular channel.
@@ -1376,7 +1403,7 @@ expand_grayscale :: proc(img: ^Image, allocator := context.allocator) -> (ok: bo
 /*
 	Helper functions to read and write data from/to a Context, etc.
 */
-@(optimization_mode="speed")
+@(optimization_mode="favor_size")
 read_data :: proc(z: $C, $T: typeid) -> (res: T, err: compress.General_Error) {
 	if r, e := compress.read_data(z, T); e != .None {
 		return {}, .Stream_Too_Short
@@ -1385,7 +1412,7 @@ read_data :: proc(z: $C, $T: typeid) -> (res: T, err: compress.General_Error) {
 	}
 }
 
-@(optimization_mode="speed")
+@(optimization_mode="favor_size")
 read_u8 :: proc(z: $C) -> (res: u8, err: compress.General_Error) {
 	if r, e := compress.read_u8(z); e != .None {
 		return {}, .Stream_Too_Short
