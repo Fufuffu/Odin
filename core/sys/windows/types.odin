@@ -253,8 +253,6 @@ FILE_GENERIC_WRITE: DWORD : STANDARD_RIGHTS_WRITE |
 	FILE_APPEND_DATA |
 	SYNCHRONIZE
 
-FILE_FLAG_OPEN_REPARSE_POINT: DWORD : 0x00200000
-FILE_FLAG_BACKUP_SEMANTICS: DWORD : 0x02000000
 SECURITY_SQOS_PRESENT: DWORD : 0x00100000
 
 FIONBIO: c_ulong : 0x8004667e
@@ -2222,11 +2220,22 @@ WAIT_OBJECT_0: DWORD : 0x00000000
 WAIT_TIMEOUT: DWORD : 258
 WAIT_FAILED: DWORD : 0xFFFFFFFF
 
+FILE_FLAG_WRITE_THROUGH: DWORD :       0x80000000
+FILE_FLAG_OVERLAPPED: DWORD :          0x40000000
+FILE_FLAG_NO_BUFFERING: DWORD :        0x20000000
+FILE_FLAG_RANDOM_ACCESS: DWORD :       0x10000000
+FILE_FLAG_SEQUENTIAL_SCAN: DWORD :     0x08000000
+FILE_FLAG_DELETE_ON_CLOSE: DWORD :     0x04000000
+FILE_FLAG_BACKUP_SEMANTICS: DWORD :    0x02000000
+FILE_FLAG_POSIX_SEMANTICS: DWORD :     0x01000000
+FILE_FLAG_SESSION_AWARE: DWORD :       0x00800000
+FILE_FLAG_OPEN_REPARSE_POINT: DWORD :  0x00200000
+FILE_FLAG_OPEN_NO_RECALL: DWORD :      0x00100000
+FILE_FLAG_FIRST_PIPE_INSTANCE: DWORD : 0x00080000
+
 PIPE_ACCESS_INBOUND: DWORD : 0x00000001
 PIPE_ACCESS_OUTBOUND: DWORD : 0x00000002
 PIPE_ACCESS_DUPLEX: DWORD : 0x00000003
-FILE_FLAG_FIRST_PIPE_INSTANCE: DWORD : 0x00080000
-FILE_FLAG_OVERLAPPED: DWORD : 0x40000000
 PIPE_WAIT: DWORD : 0x00000000
 PIPE_TYPE_BYTE: DWORD : 0x00000000
 PIPE_TYPE_MESSAGE: DWORD : 0x00000004
@@ -2781,7 +2790,7 @@ CONTEXT :: struct {
 PCONTEXT :: ^CONTEXT
 LPCONTEXT :: ^CONTEXT
 
-when size_of(uintptr) == 32 { 
+when size_of(uintptr) == 32 {
 	XSAVE_FORMAT :: struct #align(16) {
 		ControlWord: WORD,
 		StatusWord: WORD,
@@ -3546,11 +3555,11 @@ SIGDN :: enum c_int {
 }
 
 SIATTRIBFLAGS :: enum c_int {
-  AND	= 0x1,
-  OR	= 0x2,
-  APPCOMPAT	= 0x3,
-  MASK	= 0x3,
-  ALLITEMS	= 0x4000,
+	AND       = 0x1,
+	OR        = 0x2,
+	APPCOMPAT = 0x3,
+	MASK      = 0x3,
+	ALLITEMS  = 0x4000,
 }
 
 FDAP :: enum c_int {
@@ -4503,35 +4512,35 @@ DNS_INFO_NO_RECORDS :: 9501
 DNS_QUERY_NO_RECURSION :: 0x00000004
 
 DNS_RECORD :: struct { // aka DNS_RECORDA
-    pNext: ^DNS_RECORD,
-    pName: cstring,
-    wType: WORD,
-    wDataLength: USHORT,
-    Flags: DWORD,
-    dwTtl: DWORD,
-    _: DWORD,
-    Data: struct #raw_union {
-        CNAME: DNS_PTR_DATAA,
-        A:     u32be,  // Ipv4 Address
-        AAAA:  u128be, // Ipv6 Address
-        TXT:   DNS_TXT_DATAA,
-        NS:    DNS_PTR_DATAA,
-        MX:    DNS_MX_DATAA,
-        SRV:   DNS_SRV_DATAA,
-    },
+	pNext: ^DNS_RECORD,
+	pName: cstring,
+	wType: WORD,
+	wDataLength: USHORT,
+	Flags: DWORD,
+	dwTtl: DWORD,
+	_: DWORD,
+	Data: struct #raw_union {
+		CNAME: DNS_PTR_DATAA,
+		A:     u32be,  // Ipv4 Address
+		AAAA:  u128be, // Ipv6 Address
+		TXT:   DNS_TXT_DATAA,
+		NS:    DNS_PTR_DATAA,
+		MX:    DNS_MX_DATAA,
+		SRV:   DNS_SRV_DATAA,
+	},
 }
 
 DNS_TXT_DATAA :: struct {
-    dwStringCount: DWORD,
-    pStringArray:  cstring,
+	dwStringCount: DWORD,
+	pStringArray:  cstring,
 }
 
 DNS_PTR_DATAA :: cstring
 
 DNS_MX_DATAA :: struct {
-    pNameExchange: cstring, // the hostname
-    wPreference: WORD,      // lower values preferred
-    _: WORD,                // padding.
+	pNameExchange: cstring, // the hostname
+	wPreference: WORD,      // lower values preferred
+	_: WORD,                // padding.
 }
 DNS_SRV_DATAA :: struct {
 	pNameTarget: cstring,

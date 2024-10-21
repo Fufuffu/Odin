@@ -84,7 +84,6 @@ package raylib
 import "core:c"
 import "core:fmt"
 import "core:mem"
-import "core:strings"
 
 import "core:math/linalg"
 _ :: linalg
@@ -447,9 +446,9 @@ VrStereoConfig :: struct #align(4) {
 
 // File path list
 FilePathList :: struct {
-    capacity: c.uint,                     // Filepaths max entries
-    count:    c.uint,                     // Filepaths entries count
-    paths:    [^]cstring,                 // Filepaths entries
+	capacity: c.uint,                     // Filepaths max entries
+	count:    c.uint,                     // Filepaths entries count
+	paths:    [^]cstring,                 // Filepaths entries
 }
 
 // Automation event
@@ -862,7 +861,7 @@ NPatchLayout :: enum c.int {
 
 // Callbacks to hook some internal functions
 // WARNING: This callbacks are intended for advance users
-TraceLogCallback     :: #type proc "c" (logLevel: TraceLogLevel, text: cstring, args: c.va_list)        // Logging: Redirect trace log messages
+TraceLogCallback     :: #type proc "c" (logLevel: TraceLogLevel, text: cstring, args: ^c.va_list)       // Logging: Redirect trace log messages
 LoadFileDataCallback :: #type proc "c"(fileName: cstring, dataSize: ^c.int) -> [^]u8                    // FileIO: Load binary data
 SaveFileDataCallback :: #type proc "c" (fileName: cstring, data: rawptr, dataSize: c.int) -> bool       // FileIO: Save binary data
 LoadFileTextCallback :: #type proc "c" (fileName: cstring) -> [^]u8                                     // FileIO: Load text data
@@ -1029,7 +1028,6 @@ foreign lib {
 	SetTraceLogLevel :: proc(logLevel: TraceLogLevel) ---                                       // Set the current threshold (minimum) log level
 	MemAlloc         :: proc(size: c.uint) -> rawptr ---                                        // Internal memory allocator
 	MemRealloc       :: proc(ptr: rawptr, size: c.uint) -> rawptr ---                           // Internal memory reallocator
-	MemFree          :: proc(ptr: rawptr) ---                                                   // Internal memory free
 
 	// Set custom callbacks
 	// WARNING: Callbacks setup is intended for advance users
@@ -1262,7 +1260,7 @@ foreign lib {
 	LoadImage            :: proc(fileName: cstring) -> Image ---                                                               // Load image from file into CPU memory (RAM)
 	LoadImageRaw         :: proc(fileName: cstring, width, height: c.int, format: PixelFormat, headerSize: c.int) -> Image --- // Load image from RAW file data
 	LoadImageSvg         :: proc(fileNameOrString: cstring, width, height: c.int) -> Image ---                                 // Load image from SVG file data or string with specified size
-	LoadImageAnim        :: proc(fileName: cstring, frames: [^]c.int) -> Image ---                                             // Load image sequence from file (frames appended to image.data)
+	LoadImageAnim        :: proc(fileName: cstring, frames: ^c.int) -> Image ---                                               // Load image sequence from file (frames appended to image.data)
 	LoadImageFromMemory  :: proc(fileType: cstring, fileData: rawptr, dataSize: c.int) -> Image ---                            // Load image from memory buffer, fileType refers to extension: i.e. '.png'
 	LoadImageFromTexture :: proc(texture: Texture2D) -> Image ---                                                              // Load image from GPU texture data
 	LoadImageFromScreen  :: proc() -> Image ---                                                                                // Load image from screen buffer and (screenshot)
@@ -1690,8 +1688,25 @@ TextFormat :: proc(text: cstring, args: ..any) -> cstring {
 
 // Text formatting with variables (sprintf style) and allocates (must be freed with 'MemFree')
 TextFormatAlloc :: proc(text: cstring, args: ..any) -> cstring {
-	str := fmt.tprintf(string(text), ..args)
-	return strings.clone_to_cstring(str, MemAllocator())
+	return fmt.caprintf(string(text), ..args, allocator=MemAllocator())
+}
+
+
+// Internal memory free
+MemFree :: proc{
+	MemFreePtr,
+	MemFreeCstring,
+}
+
+
+@(default_calling_convention="c")
+foreign lib {
+	@(link_name="MemFree")
+	MemFreePtr :: proc(ptr: rawptr) ---
+}
+
+MemFreeCstring :: proc "c" (s: cstring) {
+	MemFreePtr(rawptr(s))
 }
 
 

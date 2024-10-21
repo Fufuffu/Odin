@@ -37,6 +37,17 @@ to_bytes :: proc "contextless" (s: []$T) -> []byte {
 }
 
 /*
+	Turns a byte slice into a type.
+*/
+@(require_results)
+to_type :: proc(buf: []u8, $T: typeid) -> (T, bool) #optional_ok {
+	if len(buf) < size_of(T) {
+		return {}, false
+	}
+	return intrinsics.unaligned_load((^T)(raw_data(buf))), true
+}
+
+/*
 	Turn a slice of one type, into a slice of another type.
 
 	Only converts the type and length of the slice itself.
@@ -96,9 +107,37 @@ contains :: proc(array: $T/[]$E, value: E) -> bool where intrinsics.type_is_comp
 	return found
 }
 
+/*
+Searches the given slice for the given element in O(n) time.
+
+If you need a custom search condition, see `linear_search_proc`
+
+Inputs:
+- array: The slice to search in.
+- key: The element to search for.
+
+Returns:
+- index: The index `i`, such that `array[i]` is the first occurrence of `key` in `array`, or -1 if `key` is not present in `array`.
+
+Example:
+	index: int
+	found: bool
+
+	a := []i32{10, 10, 10, 20}
+
+	index, found = linear_search_reverse(a, 10)
+	assert(index == 0 && found == true)
+
+	index, found = linear_search_reverse(a, 30)
+	assert(index == -1 && found == false)
+
+	// Note that `index == 1`, since it is relative to `a[2:]`
+	index, found = linear_search_reverse(a[2:], 20)
+	assert(index == 1 && found == true)
+*/
 @(require_results)
 linear_search :: proc(array: $A/[]$T, key: T) -> (index: int, found: bool)
-	where intrinsics.type_is_comparable(T) #no_bounds_check {
+	where intrinsics.type_is_comparable(T) {
 	for x, i in array {
 		if x == key {
 			return i, true
@@ -107,8 +146,18 @@ linear_search :: proc(array: $A/[]$T, key: T) -> (index: int, found: bool)
 	return -1, false
 }
 
+/*
+Searches the given slice for the first element satisfying predicate `f` in O(n) time.
+
+Inputs:
+- array: The slice to search in.
+- f: The search condition.
+
+Returns:
+- index: The index `i`, such that `array[i]` is the first `x` in `array` for which `f(x) == true`, or -1 if such `x` does not exist.
+*/
 @(require_results)
-linear_search_proc :: proc(array: $A/[]$T, f: proc(T) -> bool) -> (index: int, found: bool) #no_bounds_check {
+linear_search_proc :: proc(array: $A/[]$T, f: proc(T) -> bool) -> (index: int, found: bool) {
 	for x, i in array {
 		if f(x) {
 			return i, true
@@ -118,22 +167,88 @@ linear_search_proc :: proc(array: $A/[]$T, f: proc(T) -> bool) -> (index: int, f
 }
 
 /*
-	Binary search searches the given slice for the given element.
-	If the slice is not sorted, the returned index is unspecified and meaningless.
+Searches the given slice for the given element in O(n) time, starting from the
+slice end.
 
-	If the value is found then the returned int is the index of the matching element.
-	If there are multiple matches, then any one of the matches could be returned.
+If you need a custom search condition, see `linear_search_reverse_proc`
 
-	If the value is not found then the returned int is the index where a matching
-	element could be inserted while maintaining sorted order.
+Inputs:
+- array: The slice to search in.
+- key: The element to search for.
 
-	# Examples
+Returns:
+- index: The index `i`, such that `array[i]` is the last occurrence of `key` in `array`, or -1 if `key` is not present in `array`.
 
+Example:
+	index: int
+	found: bool
+
+	a := []i32{10, 10, 10, 20}
+
+	index, found = linear_search_reverse(a, 20)
+	assert(index == 3 && found == true)
+
+	index, found = linear_search_reverse(a, 10)
+	assert(index == 2 && found == true)
+
+	index, found = linear_search_reverse(a, 30)
+	assert(index == -1 && found == false)
+
+	// Note that `index == 1`, since it is relative to `a[2:]`
+	index, found = linear_search_reverse(a[2:], 20)
+	assert(index == 1 && found == true)
+*/
+@(require_results)
+linear_search_reverse :: proc(array: $A/[]$T, key: T) -> (index: int, found: bool)
+	where intrinsics.type_is_comparable(T) {
+	#reverse for x, i in array {
+		if x == key {
+			return i, true
+		}
+	}
+	return -1, false
+}
+
+/*
+Searches the given slice for the last element satisfying predicate `f` in O(n)
+time, starting from the slice end.
+
+Inputs:
+- array: The slice to search in.
+- f: The search condition.
+
+Returns:
+- index: The index `i`, such that `array[i]` is the last `x` in `array` for which `f(x) == true`, or -1 if such `x` does not exist.
+*/
+@(require_results)
+linear_search_reverse_proc :: proc(array: $A/[]$T, f: proc(T) -> bool) -> (index: int, found: bool) {
+	#reverse for x, i in array {
+		if f(x) {
+			return i, true
+		}
+	}
+	return -1, false
+}
+
+/*
+Searches the given slice for the given element.
+If the slice is not sorted, the returned index is unspecified and meaningless.
+
+If the value is found then the returned int is the index of the matching element.
+If there are multiple matches, then any one of the matches could be returned.
+
+If the value is not found then the returned int is the index where a matching
+element could be inserted while maintaining sorted order.
+
+For slices of more complex types see: `binary_search_by`
+
+Example:
+	/*
 	Looks up a series of four elements. The first is found, with a
 	uniquely determined position; the second and third are not
 	found; the fourth could match any position in `[1, 4]`.
+	*/
 
-	```
 	index: int
 	found: bool
 
@@ -150,9 +265,6 @@ linear_search_proc :: proc(array: $A/[]$T, f: proc(T) -> bool) -> (index: int, f
 
 	index, found = slice.binary_search(s, 1)
 	assert(index >= 1 && index <= 4 && found == true)
-	```
-
-	For slices of more complex types see: binary_search_by
 */
 @(require_results)
 binary_search :: proc(array: $A/[]$T, key: T) -> (index: int, found: bool)
@@ -160,8 +272,26 @@ binary_search :: proc(array: $A/[]$T, key: T) -> (index: int, found: bool)
 	return binary_search_by(array, key, cmp_proc(T))
 }
 
+/*
+Searches the given slice for the given element.
+If the slice is not sorted, the returned index is unspecified and meaningless.
+
+If the value is found then the returned int is the index of the matching element.
+If there are multiple matches, then any one of the matches could be returned.
+
+If the value is not found then the returned int is the index where a matching
+element could be inserted while maintaining sorted order.
+
+The array elements and key may be different types. This allows the filter procedure
+to compare keys against a slice of structs, one struct value at a time.
+
+Returns:
+- index: int
+- found: bool
+
+*/
 @(require_results)
-binary_search_by :: proc(array: $A/[]$T, key: T, f: proc(T, T) -> Ordering) -> (index: int, found: bool) #no_bounds_check {
+binary_search_by :: proc(array: $A/[]$T, key: $K, f: proc(T, K) -> Ordering) -> (index: int, found: bool) #no_bounds_check {
 	n := len(array)
 	left, right := 0, n
 	for left < right {
@@ -173,8 +303,6 @@ binary_search_by :: proc(array: $A/[]$T, key: T, f: proc(T, T) -> Ordering) -> (
 			right = mid
 		}
 	}
-	// left == right
-	// f(array[left-1], key) == .Less (if left > 0)
 	return left, left < n && f(array[left], key) == .Equal
 }
 
@@ -184,6 +312,17 @@ equal :: proc(a, b: $T/[]$E) -> bool where intrinsics.type_is_comparable(E) #no_
 		return false
 	}
 	when intrinsics.type_is_simple_compare(E) {
+		if len(a) == 0 {
+			// Empty slices are always equivalent to each other.
+			//
+			// This check is here in the event that a slice with a `data` of
+			// nil is compared against a slice with a non-nil `data` but a
+			// length of zero.
+			//
+			// In that case, `memory_compare` would return -1 or +1 because one
+			// of the pointers is nil.
+			return true
+		}
 		return runtime.memory_compare(raw_data(a), raw_data(b), len(a)*size_of(E)) == 0
 	} else {
 		for i in 0..<len(a) {

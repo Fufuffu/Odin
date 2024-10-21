@@ -116,7 +116,30 @@ assign_int :: proc(val: any, i: $T) -> bool {
 	case int:     dst = int    (i)
 	case uint:    dst = uint   (i)
 	case uintptr: dst = uintptr(i)
-	case: return false
+	case:
+		ti := type_info_of(v.id)
+		if _, ok := ti.variant.(runtime.Type_Info_Bit_Set); ok {
+			do_byte_swap := !reflect.bit_set_is_big_endian(v)
+			switch ti.size * 8 {
+			case 0: // no-op.
+			case 8:
+				x := (^u8)(v.data)
+				x^ = u8(i)
+			case 16:
+				x := (^u16)(v.data)
+				x^ = do_byte_swap ? intrinsics.byte_swap(u16(i)) : u16(i)
+			case 32:
+				x := (^u32)(v.data)
+				x^ = do_byte_swap ? intrinsics.byte_swap(u32(i)) : u32(i)
+			case 64:
+				x := (^u64)(v.data)
+				x^ = do_byte_swap ? intrinsics.byte_swap(u64(i)) : u64(i)
+			case:
+				panic("unknown bit_size size")
+			}
+			return true
+		}
+		return false
 	}
 	return true
 }
@@ -289,13 +312,18 @@ unmarshal_value :: proc(p: ^Parser, v: any) -> (err: Unmarshal_Error) {
 		
 	case .String:
 		advance_token(p)
-		str := unquote_string(token, p.spec, p.allocator) or_return
-		if unmarshal_string_token(p, any{v.data, ti.id}, str, ti) {
-			return nil
+		str  := unquote_string(token, p.spec, p.allocator) or_return
+		dest := any{v.data, ti.id}
+		if !unmarshal_string_token(p, dest, str, ti) {
+			delete(str, p.allocator)
+			return UNSUPPORTED_TYPE
 		}
-		delete(str, p.allocator)
-		return UNSUPPORTED_TYPE
 
+		switch destv in dest {
+		case string, cstring:
+		case: delete(str, p.allocator)
+		}
+		return nil
 
 	case .Open_Brace:
 		return unmarshal_object(p, v, .Close_Brace)

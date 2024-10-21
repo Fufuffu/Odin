@@ -137,6 +137,12 @@ enum lbFunctionPassManagerKind {
 	lbFunctionPassManager_COUNT
 };
 
+struct lbPadType {
+	i64 padding;
+	i64 padding_align;
+	LLVMTypeRef type;
+};
+
 struct lbModule {
 	LLVMModuleRef mod;
 	LLVMContextRef ctx;
@@ -199,6 +205,9 @@ struct lbModule {
 	PtrMap<Ast *, lbAddr> exact_value_compound_literal_addr_map; // Key: Ast_CompoundLit
 
 	LLVMPassManagerRef function_pass_managers[lbFunctionPassManager_COUNT];
+
+	BlockingMutex pad_types_mutex;
+	Array<lbPadType> pad_types;
 };
 
 struct lbEntityCorrection {
@@ -519,7 +528,7 @@ gb_internal lbAddr lb_store_range_stmt_val(lbProcedure *p, Ast *stmt_val, lbValu
 gb_internal lbValue lb_emit_source_code_location_const(lbProcedure *p, String const &procedure, TokenPos const &pos);
 gb_internal lbValue lb_const_source_code_location_const(lbModule *m, String const &procedure, TokenPos const &pos);
 
-gb_internal lbValue lb_handle_param_value(lbProcedure *p, Type *parameter_type, ParameterValue const &param_value, TokenPos const &pos);
+gb_internal lbValue lb_handle_param_value(lbProcedure *p, Type *parameter_type, ParameterValue const &param_value, TypeProc *procedure_type, Ast *call_expression);
 
 gb_internal lbValue lb_equal_proc_for_type(lbModule *m, Type *type);
 gb_internal lbValue lb_hasher_proc_for_type(lbModule *m, Type *type);

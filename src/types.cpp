@@ -137,7 +137,8 @@ struct TypeStruct {
 	Scope *         scope;
 
 	i64             custom_align;
-	i64             custom_field_align;
+	i64             custom_min_field_align;
+	i64             custom_max_field_align;
 	Type *          polymorphic_params; // Type_Tuple
 	Type *          polymorphic_parent;
 	Wait_Signal     polymorphic_wait_signal;
@@ -1474,6 +1475,7 @@ gb_internal i64 matrix_align_of(Type *t, struct TypePath *tp) {
 	
 	Type *elem = t->Matrix.elem;
 	i64 row_count = gb_max(t->Matrix.row_count, 1);
+	i64 column_count = gb_max(t->Matrix.column_count, 1);
 
 	bool pop = type_path_push(tp, elem);
 	if (tp->failure) {
@@ -1491,7 +1493,7 @@ gb_internal i64 matrix_align_of(Type *t, struct TypePath *tp) {
 	// could be maximally aligned but as a compromise, having no padding will be
 	// beneficial to third libraries that assume no padding
 	
-	i64 total_expected_size = row_count*t->Matrix.column_count*elem_size;
+	i64 total_expected_size = row_count*column_count*elem_size;
 	// i64 min_alignment = prev_pow2(elem_align * row_count);
 	i64 min_alignment = prev_pow2(total_expected_size);
 	while (total_expected_size != 0 && (total_expected_size % min_alignment) != 0) {
@@ -1523,12 +1525,15 @@ gb_internal i64 matrix_type_stride_in_bytes(Type *t, struct TypePath *tp) {
 	i64 stride_in_bytes = 0;
 	
 	// NOTE(bill, 2021-10-25): The alignment strategy here is to have zero padding
-	// It would be better for performance to pad each column so that each column
+	// It would be better for performance to pad each column/row so that each column/row
 	// could be maximally aligned but as a compromise, having no padding will be
 	// beneficial to third libraries that assume no padding
-	i64 row_count = t->Matrix.row_count;
-	stride_in_bytes = elem_size*row_count;
-	
+
+	if (t->Matrix.is_row_major) {
+		stride_in_bytes = elem_size*t->Matrix.column_count;
+	} else {
+		stride_in_bytes = elem_size*t->Matrix.row_count;
+	}
 	t->Matrix.stride_in_bytes = stride_in_bytes;
 	return stride_in_bytes;
 }
@@ -2089,6 +2094,9 @@ gb_internal bool is_type_valid_vector_elem(Type *t) {
 			return true;
 		}
 		if (is_type_boolean(t)) {
+			return true;
+		}
+		if (t->Basic.kind == Basic_rawptr) {
 			return true;
 		}
 	}
@@ -2807,8 +2815,14 @@ gb_internal bool are_types_identical_internal(Type *x, Type *y, bool check_tuple
 
 	case Type_Union:
 		if (x->Union.variants.count == y->Union.variants.count &&
-		    x->Union.custom_align == y->Union.custom_align &&
 		    x->Union.kind == y->Union.kind) {
+
+			if (x->Union.custom_align != y->Union.custom_align) {
+				if (type_align_of(x) != type_align_of(y)) {
+					return false;
+				}
+			}
+
 			// NOTE(bill): zeroth variant is nullptr
 			for_array(i, x->Union.variants) {
 				if (!are_types_identical(x->Union.variants[i], y->Union.variants[i])) {
@@ -2824,10 +2838,16 @@ gb_internal bool are_types_identical_internal(Type *x, Type *y, bool check_tuple
 		    x->Struct.is_no_copy   == y->Struct.is_no_copy &&
 		    x->Struct.fields.count == y->Struct.fields.count &&
 		    x->Struct.is_packed    == y->Struct.is_packed &&
-		    x->Struct.custom_align == y->Struct.custom_align &&
 		    x->Struct.soa_kind == y->Struct.soa_kind &&
 		    x->Struct.soa_count == y->Struct.soa_count &&
 		    are_types_identical(x->Struct.soa_elem, y->Struct.soa_elem)) {
+
+			if (x->Struct.custom_align != y->Struct.custom_align) {
+				if (type_align_of(x) != type_align_of(y)) {
+					return false;
+				}
+			}
+
 			for_array(i, x->Struct.fields) {
 				Entity *xf = x->Struct.fields[i];
 				Entity *yf = y->Struct.fields[i];
@@ -2957,10 +2977,7 @@ gb_internal Type *c_vararg_promote_type(Type *type) {
 	GB_ASSERT(type != nullptr);
 
 	Type *core = core_type(type);
-
-	if (core->kind == Type_BitSet) {
-		core = core_type(bit_set_to_int(core));
-	}
+	GB_ASSERT(core->kind != Type_BitSet);
 
 	if (core->kind == Type_Basic) {
 		switch (core->Basic.kind) {
@@ -3896,6 +3913,14 @@ gb_internal i64 type_align_of_internal(Type *t, TypePath *path) {
 				max = align;
 			}
 		}
+
+		if (t->Struct.custom_min_field_align > 0) {
+			max = gb_max(max, t->Struct.custom_min_field_align);
+		}
+		if (t->Struct.custom_max_field_align != 0 &&
+		    t->Struct.custom_max_field_align > t->Struct.custom_min_field_align) {
+			max = gb_min(max, t->Struct.custom_max_field_align);
+		}
 		return max;
 	} break;
 
@@ -3934,7 +3959,7 @@ gb_internal i64 type_align_of_internal(Type *t, TypePath *path) {
 	return gb_clamp(next_pow2(type_size_of_internal(t, path)), 1, build_context.max_align);
 }
 
-gb_internal i64 *type_set_offsets_of(Slice<Entity *> const &fields, bool is_packed, bool is_raw_union, i64 min_field_align) {
+gb_internal i64 *type_set_offsets_of(Slice<Entity *> const &fields, bool is_packed, bool is_raw_union, i64 min_field_align, i64 max_field_align) {
 	gbAllocator a = permanent_allocator();
 	auto offsets = gb_alloc_array(a, i64, fields.count);
 	i64 curr_offset = 0;
@@ -3964,6 +3989,9 @@ gb_internal i64 *type_set_offsets_of(Slice<Entity *> const &fields, bool is_pack
 			} else {
 				Type *t = fields[i]->type;
 				i64 align = gb_max(type_align_of(t), min_field_align);
+				if (max_field_align > min_field_align) {
+					align = gb_min(align, max_field_align);
+				}
 				i64 size  = gb_max(type_size_of( t), 0);
 				curr_offset = align_formula(curr_offset, align);
 				offsets[i] = curr_offset;
@@ -3980,7 +4008,7 @@ gb_internal bool type_set_offsets(Type *t) {
 		MUTEX_GUARD(&t->Struct.offset_mutex);
 		if (!t->Struct.are_offsets_set) {
 			t->Struct.are_offsets_being_processed = true;
-			t->Struct.offsets = type_set_offsets_of(t->Struct.fields, t->Struct.is_packed, t->Struct.is_raw_union, t->Struct.custom_field_align);
+			t->Struct.offsets = type_set_offsets_of(t->Struct.fields, t->Struct.is_packed, t->Struct.is_raw_union, t->Struct.custom_min_field_align, t->Struct.custom_max_field_align);
 			t->Struct.are_offsets_being_processed = false;
 			t->Struct.are_offsets_set = true;
 			return true;
@@ -3989,7 +4017,7 @@ gb_internal bool type_set_offsets(Type *t) {
 		MUTEX_GUARD(&t->Tuple.mutex);
 		if (!t->Tuple.are_offsets_set) {
 			t->Tuple.are_offsets_being_processed = true;
-			t->Tuple.offsets = type_set_offsets_of(t->Tuple.variables, t->Tuple.is_packed, false, 1);
+			t->Tuple.offsets = type_set_offsets_of(t->Tuple.variables, t->Tuple.is_packed, false, 1, 0);
 			t->Tuple.are_offsets_being_processed = false;
 			t->Tuple.are_offsets_set = true;
 			return true;
@@ -4205,7 +4233,11 @@ gb_internal i64 type_size_of_internal(Type *t, TypePath *path) {
 	
 	case Type_Matrix: {
 		i64 stride_in_bytes = matrix_type_stride_in_bytes(t, path);
-		return stride_in_bytes * t->Matrix.column_count;
+		if (t->Matrix.is_row_major) {
+			return stride_in_bytes * t->Matrix.row_count;
+		} else {
+			return stride_in_bytes * t->Matrix.column_count;
+		}
 	}
 
 	case Type_BitField:

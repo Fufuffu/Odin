@@ -388,6 +388,12 @@ gb_internal i32 linker_stage(LinkerData *gen) {
 		} else {
 			timings_start_section(timings, str_lit("ld-link"));
 
+			// Link using `clang`, unless overridden by `ODIN_CLANG_PATH` environment variable.
+			const char* clang_path = gb_get_env("ODIN_CLANG_PATH", permanent_allocator());
+			if (clang_path == NULL) {
+				clang_path = "clang";
+			}
+
 			// NOTE(vassvik): get cwd, for used for local shared libs linking, since those have to be relative to the exe
 			char cwd[256];
 			#if !defined(GB_SYSTEM_WINDOWS)
@@ -458,7 +464,20 @@ gb_internal i32 linker_stage(LinkerData *gen) {
 						}
 					#endif // GB_ARCH_*_BIT
 
-						if (is_osx) {
+						if (build_context.metrics.arch == TargetArch_riscv64) {
+							result = system_exec_command_line_app("clang",
+								"%s \"%.*s\" "
+								"-c -o \"%.*s\" "
+								"-target %.*s -march=rv64gc "
+								"%.*s "
+								"",
+								clang_path,
+								LIT(asm_file),
+								LIT(obj_file),
+								LIT(build_context.metrics.target_triplet),
+								LIT(build_context.extra_assembler_flags)
+							);
+						} else if (is_osx) {
 							// `as` comes with MacOS.
 							result = system_exec_command_line_app("as",
 								"as \"%.*s\" "
@@ -529,14 +548,8 @@ gb_internal i32 linker_stage(LinkerData *gen) {
 							//                available at runtime wherever the executable is run, so we make require those to be
 							//                local to the executable (unless the system collection is used, in which case we search
 							//                the system library paths for the library file).
-							if (string_ends_with(lib, str_lit(".a")) || string_ends_with(lib, str_lit(".o"))) {
-								// static libs and object files, absolute full path relative to the file in which the lib was imported from
+							if (string_ends_with(lib, str_lit(".a")) || string_ends_with(lib, str_lit(".o")) || string_ends_with(lib, str_lit(".so")) || string_contains_string(lib, str_lit(".so."))) {
 								lib_str = gb_string_append_fmt(lib_str, " -l:\"%.*s\" ", LIT(lib));
-							} else if (string_ends_with(lib, str_lit(".so")) || string_contains_string(lib, str_lit(".so."))) {
-								// dynamic lib, relative path to executable
-								// NOTE(vassvik): it is the user's responsibility to make sure the shared library files are visible
-								//                at runtime to the executable
-								lib_str = gb_string_append_fmt(lib_str, " -l:\"%s/%.*s\" ", cwd, LIT(lib));
 							} else {
 								// dynamic or static system lib, just link regularly searching system library paths
 								lib_str = gb_string_append_fmt(lib_str, " -l%.*s ", LIT(lib));
@@ -592,7 +605,7 @@ gb_internal i32 linker_stage(LinkerData *gen) {
 					link_settings = gb_string_appendc(link_settings, "-Wl,-fini,'_odin_exit_point' ");
 				}
 
-			} else if (build_context.metrics.os != TargetOs_openbsd && build_context.metrics.os != TargetOs_haiku) {
+			} else if (build_context.metrics.os != TargetOs_openbsd && build_context.metrics.os != TargetOs_haiku && build_context.metrics.arch != TargetArch_riscv64) {
 				// OpenBSD and Haiku default to PIE executable. do not pass -no-pie for it.
 				link_settings = gb_string_appendc(link_settings, "-no-pie ");
 			}
@@ -624,6 +637,16 @@ gb_internal i32 linker_stage(LinkerData *gen) {
 				}
 			}
 
+			if (!build_context.no_rpath) {
+				// Set the rpath to the $ORIGIN/@loader_path (the path of the executable),
+				// so that dynamic libraries are looked for at that path.
+				if (build_context.metrics.os == TargetOs_darwin) {
+					link_settings = gb_string_appendc(link_settings, "-Wl,-rpath,@loader_path ");
+				} else {
+					link_settings = gb_string_appendc(link_settings, "-Wl,-rpath,\\$ORIGIN ");
+				}
+			}
+
 			if (!build_context.no_crt) {
 				platform_lib_str = gb_string_appendc(platform_lib_str, "-lm ");
 				if (build_context.metrics.os == TargetOs_darwin) {
@@ -633,12 +656,6 @@ gb_internal i32 linker_stage(LinkerData *gen) {
 				} else {
 					platform_lib_str = gb_string_appendc(platform_lib_str, "-lc ");
 				}
-			}
-
-			// Link using `clang`, unless overridden by `ODIN_CLANG_PATH` environment variable.
-			const char* clang_path = gb_get_env("ODIN_CLANG_PATH", permanent_allocator());
-			if (clang_path == NULL) {
-				clang_path = "clang";
 			}
 
 			gbString link_command_line = gb_string_make(heap_allocator(), clang_path);

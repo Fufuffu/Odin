@@ -1,4 +1,4 @@
-//+vet !cast
+#+vet !cast
 package runtime
 
 import "base:intrinsics"
@@ -8,10 +8,9 @@ IS_WASM :: ODIN_ARCH == .wasm32 || ODIN_ARCH == .wasm64p32
 
 @(private)
 RUNTIME_LINKAGE :: "strong" when (
-	(ODIN_USE_SEPARATE_MODULES || 
+	ODIN_USE_SEPARATE_MODULES || 
 	ODIN_BUILD_MODE == .Dynamic ||
-	!ODIN_NO_CRT) &&
-	!IS_WASM) else "internal"
+	!ODIN_NO_CRT) else "internal"
 RUNTIME_REQUIRE :: false // !ODIN_TILDE
 
 @(private)
@@ -119,16 +118,15 @@ mem_copy_non_overlapping :: proc "contextless" (dst, src: rawptr, len: int) -> r
 DEFAULT_ALIGNMENT :: 2*align_of(rawptr)
 
 mem_alloc_bytes :: #force_inline proc(size: int, alignment: int = DEFAULT_ALIGNMENT, allocator := context.allocator, loc := #caller_location) -> ([]byte, Allocator_Error) {
-	if size == 0 {
-		return nil, nil
-	}
-	if allocator.procedure == nil {
+	assert(is_power_of_two_int(alignment), "Alignment must be a power of two", loc)
+	if size == 0 || allocator.procedure == nil{
 		return nil, nil
 	}
 	return allocator.procedure(allocator.data, .Alloc, size, alignment, nil, 0, loc)
 }
 
 mem_alloc :: #force_inline proc(size: int, alignment: int = DEFAULT_ALIGNMENT, allocator := context.allocator, loc := #caller_location) -> ([]byte, Allocator_Error) {
+	assert(is_power_of_two_int(alignment), "Alignment must be a power of two", loc)
 	if size == 0 || allocator.procedure == nil {
 		return nil, nil
 	}
@@ -136,6 +134,7 @@ mem_alloc :: #force_inline proc(size: int, alignment: int = DEFAULT_ALIGNMENT, a
 }
 
 mem_alloc_non_zeroed :: #force_inline proc(size: int, alignment: int = DEFAULT_ALIGNMENT, allocator := context.allocator, loc := #caller_location) -> ([]byte, Allocator_Error) {
+	assert(is_power_of_two_int(alignment), "Alignment must be a power of two", loc)
 	if size == 0 || allocator.procedure == nil {
 		return nil, nil
 	}
@@ -175,6 +174,7 @@ mem_free_all :: #force_inline proc(allocator := context.allocator, loc := #calle
 }
 
 _mem_resize :: #force_inline proc(ptr: rawptr, old_size, new_size: int, alignment: int = DEFAULT_ALIGNMENT, allocator := context.allocator, should_zero: bool, loc := #caller_location) -> (data: []byte, err: Allocator_Error) {
+	assert(is_power_of_two_int(alignment), "Alignment must be a power of two", loc)
 	if allocator.procedure == nil {
 		return nil, nil
 	}
@@ -216,9 +216,11 @@ _mem_resize :: #force_inline proc(ptr: rawptr, old_size, new_size: int, alignmen
 }
 
 mem_resize :: proc(ptr: rawptr, old_size, new_size: int, alignment: int = DEFAULT_ALIGNMENT, allocator := context.allocator, loc := #caller_location) -> (data: []byte, err: Allocator_Error) {
+	assert(is_power_of_two_int(alignment), "Alignment must be a power of two", loc)
 	return _mem_resize(ptr, old_size, new_size, alignment, allocator, true, loc)
 }
 non_zero_mem_resize :: proc(ptr: rawptr, old_size, new_size: int, alignment: int = DEFAULT_ALIGNMENT, allocator := context.allocator, loc := #caller_location) -> (data: []byte, err: Allocator_Error) {
+	assert(is_power_of_two_int(alignment), "Alignment must be a power of two", loc)
 	return _mem_resize(ptr, old_size, new_size, alignment, allocator, false, loc)
 }
 
@@ -879,9 +881,6 @@ extendhfsf2 :: proc "c" (value: __float16) -> f32 {
 
 @(link_name="__floattidf", linkage=RUNTIME_LINKAGE, require=RUNTIME_REQUIRE)
 floattidf :: proc "c" (a: i128) -> f64 {
-when IS_WASM {
-	return 0
-} else {
 	DBL_MANT_DIG :: 53
 	if a == 0 {
 		return 0.0
@@ -921,14 +920,10 @@ when IS_WASM {
 	fb[0] = u32(a)                           // mantissa-low
 	return transmute(f64)fb
 }
-}
 
 
 @(link_name="__floattidf_unsigned", linkage=RUNTIME_LINKAGE, require=RUNTIME_REQUIRE)
 floattidf_unsigned :: proc "c" (a: u128) -> f64 {
-when IS_WASM {
-	return 0
-} else {
 	DBL_MANT_DIG :: 53
 	if a == 0 {
 		return 0.0
@@ -965,7 +960,6 @@ when IS_WASM {
 	        u32((u64(a) >> 32) & 0x000FFFFF) // mantissa-high
 	fb[0] = u32(a)                           // mantissa-low
 	return transmute(f64)fb
-}
 }
 
 
@@ -1023,14 +1017,32 @@ modti3 :: proc "c" (a, b: i128) -> i128 {
 
 @(link_name="__divmodti4", linkage=RUNTIME_LINKAGE, require=RUNTIME_REQUIRE)
 divmodti4 :: proc "c" (a, b: i128, rem: ^i128) -> i128 {
-	u := udivmod128(u128(a), u128(b), (^u128)(rem))
-	return i128(u)
+	s_a := a >> (128 - 1) // -1 if negative or 0
+	s_b := b >> (128 - 1)
+	an := (a ~ s_a) - s_a // absolute
+	bn := (b ~ s_b) - s_b
+
+	s_b   ~= s_a // quotient sign
+	u_s_b := u128(s_b)
+	u_s_a := u128(s_a)
+
+	r: u128 = ---
+	u := i128((udivmodti4(u128(an), u128(bn), &r) ~ u_s_b) - u_s_b) // negate if negative
+	rem^ = i128((r ~ u_s_a) - u_s_a)
+	return u
 }
 
 @(link_name="__divti3", linkage=RUNTIME_LINKAGE, require=RUNTIME_REQUIRE)
 divti3 :: proc "c" (a, b: i128) -> i128 {
-	u := udivmodti4(u128(a), u128(b), nil)
-	return i128(u)
+	s_a := a >> (128 - 1) // -1 if negative or 0
+	s_b := b >> (128 - 1)
+	an := (a ~ s_a) - s_a // absolute
+	bn := (b ~ s_b) - s_b
+
+	s_a   ~= s_b // quotient sign
+	u_s_a := u128(s_a)
+
+	return i128((udivmodti4(u128(an), u128(bn), nil) ~ u_s_a) - u_s_a) // negate if negative
 }
 
 

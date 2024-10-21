@@ -673,7 +673,7 @@ gb_internal void check_struct_type(CheckerContext *ctx, Type *struct_type, Ast *
 
 #define ST_ALIGN(_name) if (st->_name != nullptr) {                                                \
 		if (st->is_packed) {                                                               \
-			syntax_error(st->_name, "'#%s' cannot be applied with '#packed'", #_name); \
+			error(st->_name, "'#%s' cannot be applied with '#packed'", #_name); \
 			return;                                                                    \
 		}                                                                                  \
 		i64 align = 1;                                                                     \
@@ -682,12 +682,31 @@ gb_internal void check_struct_type(CheckerContext *ctx, Type *struct_type, Ast *
 		}                                                                                  \
 	}
 
-	ST_ALIGN(field_align);
+	ST_ALIGN(min_field_align);
+	ST_ALIGN(max_field_align);
 	ST_ALIGN(align);
-	if (struct_type->Struct.custom_align < struct_type->Struct.custom_field_align) {
-		warning(st->align, "#align(%lld) is defined to be less than #field_name(%lld)",
-		        cast(long long)struct_type->Struct.custom_align,
-		        cast(long long)struct_type->Struct.custom_field_align);
+	if (struct_type->Struct.custom_align < struct_type->Struct.custom_min_field_align) {
+		error(st->align, "#align(%lld) is defined to be less than #min_field_align(%lld)",
+		      cast(long long)struct_type->Struct.custom_align,
+		      cast(long long)struct_type->Struct.custom_min_field_align);
+	}
+	if (struct_type->Struct.custom_max_field_align != 0 &&
+	    struct_type->Struct.custom_align > struct_type->Struct.custom_max_field_align) {
+		error(st->align, "#align(%lld) is defined to be greater than #max_field_align(%lld)",
+		      cast(long long)struct_type->Struct.custom_align,
+		      cast(long long)struct_type->Struct.custom_max_field_align);
+	}
+	if (struct_type->Struct.custom_max_field_align != 0 &&
+	    struct_type->Struct.custom_min_field_align > struct_type->Struct.custom_max_field_align) {
+		error(st->align, "#min_field_align(%lld) is defined to be greater than #max_field_align(%lld)",
+		      cast(long long)struct_type->Struct.custom_min_field_align,
+		      cast(long long)struct_type->Struct.custom_max_field_align);
+
+		i64 a = gb_min(struct_type->Struct.custom_min_field_align, struct_type->Struct.custom_max_field_align);
+		i64 b = gb_max(struct_type->Struct.custom_min_field_align, struct_type->Struct.custom_max_field_align);
+		// NOTE(bill): sort them to keep code consistent
+		struct_type->Struct.custom_min_field_align = a;
+		struct_type->Struct.custom_max_field_align = b;
 	}
 
 #undef ST_ALIGN
@@ -1605,6 +1624,25 @@ gb_internal bool is_expr_from_a_parameter(CheckerContext *ctx, Ast *expr) {
 	return false;
 }
 
+gb_internal bool is_caller_expression(Ast *expr) {
+	if (expr->kind == Ast_BasicDirective && expr->BasicDirective.name.string == "caller_expression") {
+		return true;
+	}
+
+	Ast *call = unparen_expr(expr);
+	if (call->kind != Ast_CallExpr) {
+		return false;
+	}
+
+	ast_node(ce, CallExpr, call);
+	if (ce->proc->kind != Ast_BasicDirective) {
+		return false;
+	}
+
+	ast_node(bd, BasicDirective, ce->proc);
+	String name = bd->name.string;
+	return name == "caller_expression";
+}
 
 gb_internal ParameterValue handle_parameter_value(CheckerContext *ctx, Type *in_type, Type **out_type_, Ast *expr, bool allow_caller_location) {
 	ParameterValue param_value = {};
@@ -1626,7 +1664,19 @@ gb_internal ParameterValue handle_parameter_value(CheckerContext *ctx, Type *in_
 		if (in_type) {
 			check_assignment(ctx, &o, in_type, str_lit("parameter value"));
 		}
+	} else if (is_caller_expression(expr)) {
+		if (expr->kind != Ast_BasicDirective) {
+			check_builtin_procedure_directive(ctx, &o, expr, t_string);
+		}
 
+		param_value.kind = ParameterValue_Expression;
+		o.type = t_string;
+		o.mode = Addressing_Value;
+		o.expr = expr;
+
+		if (in_type) {
+			check_assignment(ctx, &o, in_type, str_lit("parameter value"));
+		}
 	} else {
 		if (in_type) {
 			check_expr_with_type_hint(ctx, &o, expr, in_type);
@@ -1781,6 +1831,11 @@ gb_internal Type *check_get_params(CheckerContext *ctx, Scope *scope, Ast *_para
 					success = false;
 				}
 
+				if (default_value != nullptr) {
+					error(type_expr, "A variadic parameter may not have a default value");
+					success = false;
+				}
+
 				GB_ASSERT(original_type_expr->kind == Ast_Ellipsis);
 				type_expr = ast_array_type(type_expr->file(), original_type_expr->Ellipsis.token, nullptr, type_expr);
 			}
@@ -1853,6 +1908,7 @@ gb_internal Type *check_get_params(CheckerContext *ctx, Scope *scope, Ast *_para
 			case ParameterValue_Nil:
 				break;
 			case ParameterValue_Location:
+			case ParameterValue_Expression:
 			case ParameterValue_Value:
 				gbString str = type_to_string(type);
 				error(params[i], "A default value for a parameter must not be a polymorphic constant type, got %s", str);
@@ -2309,8 +2365,28 @@ gb_internal Type *check_get_results(CheckerContext *ctx, Scope *scope, Ast *_res
 	return tuple;
 }
 
+gb_internal void check_procedure_param_polymorphic_type(CheckerContext *ctx, Type *type, Ast *type_expr) {
+	GB_ASSERT_NOT_NULL(type_expr);
+	if (type == nullptr || ctx->in_polymorphic_specialization) { return; }
+	if (!is_type_polymorphic_record_unspecialized(type)) { return; }
 
+	bool invalid_polymorpic_type_use = false;
+	switch (type_expr->kind) {
+	case_ast_node(pt, Ident, type_expr);
+		invalid_polymorpic_type_use = true;
+	case_end;
 
+	case_ast_node(pt, SelectorExpr, type_expr);
+		invalid_polymorpic_type_use = true;
+	case_end;
+	}
+
+	if (invalid_polymorpic_type_use) {
+		gbString expr_str = expr_to_string(type_expr);
+		defer (gb_string_free(expr_str));
+		error(type_expr, "Invalid use of a non-specialized polymorphic type '%s'", expr_str);
+	}
+}
 
 // NOTE(bill): 'operands' is for generating non generic procedure type
 gb_internal bool check_procedure_type(CheckerContext *ctx, Type *type, Ast *proc_type_node, Array<Operand> const *operands) {
@@ -2433,6 +2509,7 @@ gb_internal bool check_procedure_type(CheckerContext *ctx, Type *type, Ast *proc
 		if (e->kind != Entity_Variable) {
 			is_polymorphic = true;
 		} else if (is_type_polymorphic(e->type)) {
+			check_procedure_param_polymorphic_type(c, e->type, e->Variable.type_expr);
 			is_polymorphic = true;
 		}
 
@@ -2717,6 +2794,18 @@ gb_internal void add_map_key_type_dependencies(CheckerContext *ctx, Type *key) {
 gb_internal void check_map_type(CheckerContext *ctx, Type *type, Ast *node) {
 	GB_ASSERT(type->kind == Type_Map);
 	ast_node(mt, MapType, node);
+
+	if (mt->key == NULL) {
+		if (mt->value != NULL) {
+			Type *value = check_type(ctx, mt->value);
+			gbString str = type_to_string(value);
+			error(node, "Missing map key type, got 'map[]%s'", str);
+			gb_string_free(str);
+			return;
+		}
+		error(node, "Missing map key type, got 'map[]T'");
+		return;
+	}
 
 	Type *key   = check_type(ctx, mt->key);
 	Type *value = check_type(ctx, mt->value);
@@ -3171,7 +3260,7 @@ gb_internal void check_array_type_internal(CheckerContext *ctx, Ast *e, Type **t
 			} else if (name == "simd") {
 				if (!is_type_valid_vector_elem(elem) && !is_type_polymorphic(elem)) {
 					gbString str = type_to_string(elem);
-					error(at->elem, "Invalid element type for #simd, expected an integer, float, or boolean with no specific endianness, got '%s'", str);
+					error(at->elem, "Invalid element type for #simd, expected an integer, float, boolean, or 'rawptr' with no specific endianness, got '%s'", str);
 					gb_string_free(str);
 					*type = alloc_type_array(elem, count, generic_type);
 					return;

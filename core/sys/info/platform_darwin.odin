@@ -528,6 +528,13 @@ macos_release_map: map[string]Darwin_To_Release = {
 	"23E214"     = {{23, 4, 0}, "macOS", {"Sonoma",         {14, 4, 0}}},
 	"23E224"     = {{23, 4, 0}, "macOS", {"Sonoma",         {14, 4, 1}}},
 	"23F79"      = {{23, 5, 0}, "macOS", {"Sonoma",         {14, 5, 0}}},
+	"23G80"      = {{23, 6, 0}, "macOS", {"Sonoma",         {14, 6, 0}}},
+	"23G93"      = {{23, 6, 0}, "macOS", {"Sonoma",         {14, 6, 1}}},
+	"23H124"     = {{23, 6, 0}, "macOS", {"Sonoma",         {14, 7, 0}}},
+
+	// MacOS Sequoia
+	"24A335"     = {{24, 0, 0}, "macOS", {"Sequoia",        {15, 0, 0}}},
+	"24A348"     = {{24, 0, 0}, "macOS", {"Sequoia",        {15, 0, 1}}},
 }
 
 @(private)

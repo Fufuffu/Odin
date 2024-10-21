@@ -1,4 +1,4 @@
-//+private
+#+private
 package os2
 
 import win32 "core:sys/windows"
@@ -19,8 +19,6 @@ _lookup_env :: proc(key: string, allocator: runtime.Allocator) -> (value: string
 		}
 		return "", true
 	}
-
-	TEMP_ALLOCATOR_GUARD()
 
 	b := make([]u16, n+1, temp_allocator())
 

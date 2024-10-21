@@ -1,4 +1,4 @@
-//+private
+#+private
 package os2
 
 import "base:runtime"
@@ -6,25 +6,22 @@ import "core:time"
 import "core:strings"
 import win32 "core:sys/windows"
 
-_fstat :: proc(f: ^File, allocator: runtime.Allocator) -> (File_Info, Error) {
+_fstat :: proc(f: ^File, allocator: runtime.Allocator) -> (fi: File_Info, err: Error) {
 	if f == nil || (^File_Impl)(f.impl).fd == nil {
-		return {}, nil
+		return
 	}
 
-	path, err := _cleanpath_from_handle(f, allocator)
-	if err != nil {
-		return {}, err
-	}
+	path := _cleanpath_from_handle(f, allocator) or_return
 
 	h := _handle(f)
 	switch win32.GetFileType(h) {
 	case win32.FILE_TYPE_PIPE, win32.FILE_TYPE_CHAR:
-		fi := File_Info {
+		fi = File_Info {
 			fullpath = path,
 			name = basename(path),
 			type = file_type(h),
 		}
-		return fi, nil
+		return
 	}
 
 	return _file_info_from_get_file_information_by_handle(path, h, allocator)
@@ -47,6 +44,7 @@ full_path_from_name :: proc(name: string, allocator: runtime.Allocator) -> (path
 	if name == "" {
 		name = "."
 	}
+
 	TEMP_ALLOCATOR_GUARD()
 
 	p := win32_utf8_to_utf16(name, temp_allocator()) or_return
@@ -130,7 +128,9 @@ _cleanpath_from_handle :: proc(f: ^File, allocator: runtime.Allocator) -> (strin
 	if n == 0 {
 		return "", _get_platform_error()
 	}
+
 	TEMP_ALLOCATOR_GUARD()
+
 	buf := make([]u16, max(n, 260)+1, temp_allocator())
 	n = win32.GetFinalPathNameByHandleW(h, raw_data(buf), u32(len(buf)), 0)
 	return _cleanpath_from_buf(buf[:n], allocator)
@@ -146,7 +146,9 @@ _cleanpath_from_handle_u16 :: proc(f: ^File) -> ([]u16, Error) {
 	if n == 0 {
 		return nil, _get_platform_error()
 	}
+
 	TEMP_ALLOCATOR_GUARD()
+
 	buf := make([]u16, max(n, 260)+1, temp_allocator())
 	n = win32.GetFinalPathNameByHandleW(h, raw_data(buf), u32(len(buf)), 0)
 	return _cleanpath_strip_prefix(buf[:n]), nil

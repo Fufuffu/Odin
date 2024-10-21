@@ -39,6 +39,7 @@ enum TargetArchKind : u16 {
 	TargetArch_arm64,
 	TargetArch_wasm32,
 	TargetArch_wasm64p32,
+	TargetArch_riscv64,
 
 	TargetArch_COUNT,
 };
@@ -104,6 +105,7 @@ gb_global String target_arch_names[TargetArch_COUNT] = {
 	str_lit("arm64"),
 	str_lit("wasm32"),
 	str_lit("wasm64p32"),
+	str_lit("riscv64"),
 };
 
 #include "build_settings_microarch.cpp"
@@ -283,6 +285,7 @@ enum VetFlags : u64 {
 	VetFlag_Deprecated      = 1u<<7,
 	VetFlag_Cast            = 1u<<8,
 	VetFlag_Tabs            = 1u<<9,
+	VetFlag_UnusedProcedures = 1u<<10,
 
 	VetFlag_Unused = VetFlag_UnusedVariables|VetFlag_UnusedImports,
 
@@ -314,6 +317,8 @@ u64 get_vet_flag_from_name(String const &name) {
 		return VetFlag_Cast;
 	} else if (name == "tabs") {
 		return VetFlag_Tabs;
+	} else if (name == "unused-procedures") {
+		return VetFlag_UnusedProcedures;
 	}
 	return VetFlag_NONE;
 }
@@ -381,6 +386,7 @@ struct BuildContext {
 
 	u64 vet_flags;
 	u32 sanitizer_flags;
+	StringSet vet_packages;
 
 	bool   has_resource;
 	String link_flags;
@@ -409,6 +415,7 @@ struct BuildContext {
 	bool   no_dynamic_literals;
 	bool   no_output_files;
 	bool   no_crt;
+	bool   no_rpath;
 	bool   no_entry_point;
 	bool   no_thread_local;
 	bool   use_lld;
@@ -428,6 +435,7 @@ struct BuildContext {
 	bool   json_errors;
 	bool   has_ansi_terminal_colours;
 
+	bool   fast_isel;
 	bool   ignore_lazy;
 	bool   ignore_llvm_build;
 	bool   ignore_panic;
@@ -518,113 +526,123 @@ gb_internal isize MAX_ERROR_COLLECTOR_COUNT(void) {
 	#define AMD64_MAX_ALIGNMENT 8
 #endif
 
+#if LLVM_VERSION_MAJOR >= 18
+	#define I386_MAX_ALIGNMENT 16
+#else
+	#define I386_MAX_ALIGNMENT 4
+#endif
+
 gb_global TargetMetrics target_windows_i386 = {
 	TargetOs_windows,
 	TargetArch_i386,
-	4, 4, 4, 8,
+	4, 4, I386_MAX_ALIGNMENT, 16,
 	str_lit("i386-pc-windows-msvc"),
 };
 gb_global TargetMetrics target_windows_amd64 = {
 	TargetOs_windows,
 	TargetArch_amd64,
-	8, 8, AMD64_MAX_ALIGNMENT, 16,
+	8, 8, AMD64_MAX_ALIGNMENT, 32,
 	str_lit("x86_64-pc-windows-msvc"),
 };
 
 gb_global TargetMetrics target_linux_i386 = {
 	TargetOs_linux,
 	TargetArch_i386,
-	4, 4, 4, 8,
+	4, 4, I386_MAX_ALIGNMENT, 16,
 	str_lit("i386-pc-linux-gnu"),
-
 };
 gb_global TargetMetrics target_linux_amd64 = {
 	TargetOs_linux,
 	TargetArch_amd64,
-	8, 8, AMD64_MAX_ALIGNMENT, 16,
+	8, 8, AMD64_MAX_ALIGNMENT, 32,
 	str_lit("x86_64-pc-linux-gnu"),
 };
 gb_global TargetMetrics target_linux_arm64 = {
 	TargetOs_linux,
 	TargetArch_arm64,
-	8, 8, 16, 16,
+	8, 8, 16, 32,
 	str_lit("aarch64-linux-elf"),
 };
-
 gb_global TargetMetrics target_linux_arm32 = {
 	TargetOs_linux,
 	TargetArch_arm32,
-	4, 4, 4, 8,
+	4, 4, 8, 16,
 	str_lit("arm-unknown-linux-gnueabihf"),
+};
+gb_global TargetMetrics target_linux_riscv64 = {
+	TargetOs_linux,
+	TargetArch_riscv64,
+	8, 8, 16, 32,
+	str_lit("riscv64-linux-gnu"),
 };
 
 gb_global TargetMetrics target_darwin_amd64 = {
 	TargetOs_darwin,
 	TargetArch_amd64,
-	8, 8, AMD64_MAX_ALIGNMENT, 16,
+	8, 8, AMD64_MAX_ALIGNMENT, 32,
 	str_lit("x86_64-apple-macosx"), // NOTE: Changes during initialization based on build flags.
 };
 
 gb_global TargetMetrics target_darwin_arm64 = {
 	TargetOs_darwin,
 	TargetArch_arm64,
-	8, 8, 16, 16,
+	8, 8, 16, 32,
 	str_lit("arm64-apple-macosx"), // NOTE: Changes during initialization based on build flags.
 };
 
 gb_global TargetMetrics target_freebsd_i386 = {
 	TargetOs_freebsd,
 	TargetArch_i386,
-	4, 4, 4, 8,
+	4, 4, I386_MAX_ALIGNMENT, 16,
 	str_lit("i386-unknown-freebsd-elf"),
 };
 
 gb_global TargetMetrics target_freebsd_amd64 = {
 	TargetOs_freebsd,
 	TargetArch_amd64,
-	8, 8, AMD64_MAX_ALIGNMENT, 16,
+	8, 8, AMD64_MAX_ALIGNMENT, 32,
 	str_lit("x86_64-unknown-freebsd-elf"),
 };
 
 gb_global TargetMetrics target_freebsd_arm64 = {
 	TargetOs_freebsd,
 	TargetArch_arm64,
-	8, 8, 16, 16,
+	8, 8, 16, 32,
 	str_lit("aarch64-unknown-freebsd-elf"),
 };
 
 gb_global TargetMetrics target_openbsd_amd64 = {
 	TargetOs_openbsd,
 	TargetArch_amd64,
-	8, 8, AMD64_MAX_ALIGNMENT, 16,
+	8, 8, AMD64_MAX_ALIGNMENT, 32,
 	str_lit("x86_64-unknown-openbsd-elf"),
 };
 
 gb_global TargetMetrics target_netbsd_amd64 = {
 	TargetOs_netbsd,
 	TargetArch_amd64,
-	8, 8, AMD64_MAX_ALIGNMENT, 16,
+	8, 8, AMD64_MAX_ALIGNMENT, 32,
 	str_lit("x86_64-unknown-netbsd-elf"),
 };
 
 gb_global TargetMetrics target_netbsd_arm64 = {
 	TargetOs_netbsd,
 	TargetArch_arm64,
-	8, 8, 16, 16,
+	8, 8, 16, 32,
 	str_lit("aarch64-unknown-netbsd-elf"),
 };
 
 gb_global TargetMetrics target_haiku_amd64 = {
 	TargetOs_haiku,
 	TargetArch_amd64,
-	8, 8, AMD64_MAX_ALIGNMENT, 16,
+	8, 8, AMD64_MAX_ALIGNMENT, 32,
 	str_lit("x86_64-unknown-haiku"),
 };
 
 gb_global TargetMetrics target_essence_amd64 = {
 	TargetOs_essence,
 	TargetArch_amd64,
-	8, 8, AMD64_MAX_ALIGNMENT, 16,
+	8, 8, AMD64_MAX_ALIGNMENT, 32,
 	str_lit("x86_64-pc-none-elf"),
 };
 
@@ -685,7 +703,7 @@ gb_global TargetMetrics target_wasi_wasm64p32 = {
 gb_global TargetMetrics target_freestanding_amd64_sysv = {
 	TargetOs_freestanding,
 	TargetArch_amd64,
-	8, 8, AMD64_MAX_ALIGNMENT, 16,
+	8, 8, AMD64_MAX_ALIGNMENT, 32,
 	str_lit("x86_64-pc-none-gnu"),
 	TargetABI_SysV,
 };
@@ -693,7 +711,7 @@ gb_global TargetMetrics target_freestanding_amd64_sysv = {
 gb_global TargetMetrics target_freestanding_amd64_win64 = {
 	TargetOs_freestanding,
 	TargetArch_amd64,
-	8, 8, AMD64_MAX_ALIGNMENT, 16,
+	8, 8, AMD64_MAX_ALIGNMENT, 32,
 	str_lit("x86_64-pc-none-msvc"),
 	TargetABI_Win64,
 };
@@ -701,15 +719,21 @@ gb_global TargetMetrics target_freestanding_amd64_win64 = {
 gb_global TargetMetrics target_freestanding_arm64 = {
 	TargetOs_freestanding,
 	TargetArch_arm64,
-	8, 8, 16, 16,
+	8, 8, 16, 32,
 	str_lit("aarch64-none-elf"),
 };
 
 gb_global TargetMetrics target_freestanding_arm32 = {
 	TargetOs_freestanding,
 	TargetArch_arm32,
-	4, 4, 4, 8,
+	4, 4, 8, 16,
 	str_lit("arm-unknown-unknown-gnueabihf"),
+};
+gb_global TargetMetrics target_freestanding_riscv64 = {
+	TargetOs_freestanding,
+	TargetArch_riscv64,
+	8, 8, 16, 32,
+	str_lit("riscv64-unknown-gnu"),
 };
 
 
@@ -728,6 +752,7 @@ gb_global NamedTargetMetrics named_targets[] = {
 	{ str_lit("linux_amd64"),         &target_linux_amd64    },
 	{ str_lit("linux_arm64"),         &target_linux_arm64    },
 	{ str_lit("linux_arm32"),         &target_linux_arm32    },
+	{ str_lit("linux_riscv64"),       &target_linux_riscv64  },
 
 	{ str_lit("windows_i386"),        &target_windows_i386   },
 	{ str_lit("windows_amd64"),       &target_windows_amd64  },
@@ -756,6 +781,8 @@ gb_global NamedTargetMetrics named_targets[] = {
 
 	{ str_lit("freestanding_arm64"), &target_freestanding_arm64 },
 	{ str_lit("freestanding_arm32"), &target_freestanding_arm32 },
+
+	{ str_lit("freestanding_riscv64"), &target_freestanding_riscv64 },
 };
 
 gb_global NamedTargetMetrics *selected_target_metrics;
@@ -1439,8 +1466,6 @@ gb_internal void init_build_context(TargetMetrics *cross_target, Subtarget subta
 		bc->thread_count = gb_max(bc->affinity.thread_count, 1);
 	}
 
-	string_set_init(&bc->custom_attributes);
-
 	bc->ODIN_VENDOR  = str_lit("odin");
 	bc->ODIN_VERSION = ODIN_VERSION;
 	bc->ODIN_ROOT    = odin_root_dir();
@@ -1504,6 +1529,8 @@ gb_internal void init_build_context(TargetMetrics *cross_target, Subtarget subta
 			metrics = &target_haiku_amd64;
 		#elif defined(GB_CPU_ARM)
 			metrics = &target_linux_arm64;
+		#elif defined(GB_CPU_RISCV)
+			metrics = &target_linux_riscv64;
 		#else
 			metrics = &target_linux_amd64;
 		#endif
@@ -1626,6 +1653,8 @@ gb_internal void init_build_context(TargetMetrics *cross_target, Subtarget subta
 
 		// Disallow on wasm
 		bc->use_separate_modules = false;
+	} if(bc->metrics.arch == TargetArch_riscv64 && bc->cross_compiling) {
+		bc->link_flags = str_lit("-target riscv64 ");
 	} else {
 		// NOTE: for targets other than darwin, we don't specify a `-target` link flag.
 		// This is because we don't support cross-linking and clang is better at figuring
@@ -2020,16 +2049,19 @@ gb_internal bool init_build_paths(String init_filename) {
 		return false;
 	}
 
-	gbFile output_file_test;
-	gbFileError output_test_err = gb_file_open_mode(&output_file_test, gbFileMode_Append | gbFileMode_Rw, (const char*)output_file.text);
-	defer (gb_file_close(&output_file_test));
+	// gbFile      output_file_test;
+	// const char* output_file_name = (const char*)output_file.text;
+	// gbFileError output_test_err = gb_file_open_mode(&output_file_test, gbFileMode_Append | gbFileMode_Rw, output_file_name);
 
-	if (output_test_err != 0) {
-		String output_file = path_to_string(ha, bc->build_paths[BuildPath_Output]);
-		defer (gb_free(ha, output_file.text));
-		gb_printf_err("No write permissions for output path: %.*s\n", LIT(output_file));
-		return false;
-	}
+	// if (output_test_err == 0) {
+	// 	gb_file_close(&output_file_test);
+	// 	gb_file_remove(output_file_name);
+	// } else {
+	// 	String output_file = path_to_string(ha, bc->build_paths[BuildPath_Output]);
+	// 	defer (gb_free(ha, output_file.text));
+	// 	gb_printf_err("No write permissions for output path: %.*s\n", LIT(output_file));
+	// 	return false;
+	// }
 
 	if (build_context.sanitizer_flags & SanitizerFlag_Address) {
 		switch (build_context.metrics.os) {
